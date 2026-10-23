@@ -131,9 +131,63 @@ export function answerPermission(permissionId: string, decision: PermissionDecis
   return postWithUiToken(`/permission/${encodeURIComponent(permissionId)}`, { decision })
 }
 
-/** Change an office setting (answerPermissions, logPrompts). */
+/** Change an office setting (answerPermissions, logPrompts, chatAi). */
 export function postSetting(body: Record<string, unknown>): Promise<boolean> {
   return postWithUiToken('/settings', body)
+}
+
+/**
+ * POST /settings and return the JSON body (for chatAi — server is source of truth).
+ * null on failure.
+ */
+export async function postSettingJson(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  if (!uiToken) return null
+  try {
+    const res = await fetch(`${officeHttpBase()}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${uiToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return null
+    return await res.json() as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** Authenticated GET with the UI token (e.g. /llm/models). */
+export async function getWithUiToken(path: string): Promise<Record<string, unknown> | null> {
+  if (!uiToken) return null
+  try {
+    const res = await fetch(`${officeHttpBase()}${path}`, {
+      headers: { Authorization: `Bearer ${uiToken}` },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!res.ok) return null
+    return await res.json() as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** Authenticated POST with the UI token; returns JSON or null. */
+export async function postWithUiTokenJson(path: string, body: unknown, timeoutMs = 30000): Promise<Record<string, unknown> | null> {
+  if (!uiToken) return null
+  try {
+    const res = await fetch(`${officeHttpBase()}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${uiToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!res.ok) {
+      try { return await res.json() as Record<string, unknown> } catch { return null }
+    }
+    return await res.json() as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------

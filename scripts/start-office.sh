@@ -67,13 +67,24 @@ open_target() {
     return 0
 }
 
-# Start "$@" in the background in its own process group (python's setsid; a
-# plain background job if python3 is missing) and leave its pid in
-# SPAWNED_PID. A whole tree such as npx -> vite can then be stopped at once.
+# Prefer a real Python with os.setsid (Unix process groups). On Windows:
+# - Store stub `python3` often fails entirely
+# - real Python exists but has no os.setsid — use a plain background job instead
+PYTHON=""
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import os; os.setsid' >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import os; os.setsid' >/dev/null 2>&1; then
+    PYTHON=python
+fi
+
+# Start "$@" in the background in its own process group (python's setsid when
+# available; a plain background job on Windows / if no suitable Python) and
+# leave its pid in SPAWNED_PID. A whole tree such as npx -> vite can then be
+# stopped at once on Unix via kill -TERM -- -pid.
 SPAWNED_PID=""
 spawn() {
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" < /dev/null &
+    if [ -n "$PYTHON" ]; then
+        "$PYTHON" -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" < /dev/null &
     else
         "$@" < /dev/null &
     fi

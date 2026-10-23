@@ -36,6 +36,14 @@ import { mountPermissions, sanitiseSuggestions, redactPermission } from './permi
 import { mountHealth, readVersion } from './health.js'
 import { readPort, readUiPort, readHost, loadOfficeConfig, bossFromConfig } from './config.js'
 import { agentTranscriptPath, readTranscript, isTranscriptPath, clampLine } from './transcript.js'
+import {
+  defaultStoredChatAi,
+  normalizeStoredChatAi,
+  resolveChatAiConfig,
+  publicChatAiView,
+  listProviderMeta,
+  resolveProvider,
+} from './llm/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -1329,7 +1337,28 @@ function clampCount(val, max = Number.MAX_SAFE_INTEGER) {
 const SETTINGS_FILE = join(RUNTIME_DIR, 'settings.json')
 const ANSWER_MARKER_FILE = join(RUNTIME_DIR, 'answer-permissions')
 const LOG_PROMPTS_LEVELS = new Map([['off', 0], ['summary', 200], ['full', MAX_TEXT_LEN]])
-const settings = { logPrompts: 'summary', answerPermissions: true }
+const settings = {
+  logPrompts: 'summary',
+  answerPermissions: true,
+  chatAi: defaultStoredChatAi(),
+}
+
+/** Public settings JSON — never includes API key values. */
+function settingsResponse() {
+  let resolved
+  try {
+    resolved = resolveChatAiConfig({ chatAi: settings.chatAi, env: process.env })
+  } catch {
+    resolved = resolveChatAiConfig({ chatAi: defaultStoredChatAi(), env: {} })
+  }
+  return {
+    logPrompts: settings.logPrompts,
+    answerPermissions: settings.answerPermissions,
+    logPromptsLevels: Array.from(LOG_PROMPTS_LEVELS.keys()),
+    chatAi: publicChatAiView(resolved, { officeHome: RUNTIME_DIR }),
+    chatAiProviders: listProviderMeta(),
+  }
+}
 
 function loadSettings() {
   if (!existsSync(SETTINGS_FILE)) return
@@ -1338,6 +1367,13 @@ function loadSettings() {
     if (saved && typeof saved === 'object') {
       if (LOG_PROMPTS_LEVELS.has(saved.logPrompts)) settings.logPrompts = saved.logPrompts
       if (typeof saved.answerPermissions === 'boolean') settings.answerPermissions = saved.answerPermissions
+      if (saved.chatAi && typeof saved.chatAi === 'object') {
+        try {
+          settings.chatAi = normalizeStoredChatAi(saved.chatAi, { previous: defaultStoredChatAi() })
+        } catch (err) {
+          console.warn('[settings] Ignoring invalid chatAi in settings.json:', err.message)
+        }
+      }
     }
   } catch (err) {
     console.warn('[settings] Could not read settings:', err.message)
@@ -2406,17 +2442,16 @@ app.get('/signals', (req, res) => {
 
 /**
  * GET /settings — the office settings (see Settings above). Open.
- * POST /settings — change them: { logPrompts: "off" | "summary" | "full",
- * answerPermissions: boolean }. Needs the UI token (the office page) or the
- * bearer token: it decides what of the conversation is kept and whether a
- * permission dialog may be answered from here.
+ * POST /settings — change them: { logPrompts, answerPermissions, chatAi }.
+ * Needs the UI token (the office page) or the bearer token.
+ * chatAi never stores API key values — only provider/model/baseUrl/apiKeyEnv name.
  */
 app.get('/settings', (_req, res) => {
-  res.json({ ...settings, logPromptsLevels: Array.from(LOG_PROMPTS_LEVELS.keys()) })
+  res.json(settingsResponse())
 })
 
 app.post('/settings', requireUi, (req, res) => {
-  const { logPrompts, answerPermissions } = req.body ?? {}
+  const { logPrompts, answerPermissions, chatAi } = req.body ?? {}
   if (logPrompts !== undefined) {
     if (typeof logPrompts !== 'string' || !LOG_PROMPTS_LEVELS.has(logPrompts)) {
       return res.status(400).json({ error: `logPrompts must be one of ${Array.from(LOG_PROMPTS_LEVELS.keys()).join(', ')}` })
@@ -2425,14 +2460,115 @@ app.post('/settings', requireUi, (req, res) => {
   if (answerPermissions !== undefined && typeof answerPermissions !== 'boolean') {
     return res.status(400).json({ error: 'answerPermissions must be true or false' })
   }
+  if (chatAi !== undefined) {
+    try {
+      settings.chatAi = normalizeStoredChatAi(chatAi, { previous: settings.chatAi })
+    } catch (err) {
+      return res.status(400).json({ error: err.message || 'invalid chatAi' })
+    }
+  }
   if (logPrompts !== undefined) settings.logPrompts = logPrompts
   if (answerPermissions !== undefined) settings.answerPermissions = answerPermissions
   saveSettings()
   syncAnswerMarker()
-  console.log(`[settings] logPrompts = ${settings.logPrompts}, answerPermissions = ${settings.answerPermissions}`)
+  console.log(`[settings] logPrompts = ${settings.logPrompts}, answerPermissions = ${settings.answerPermissions}, chatAi.provider = ${settings.chatAi.provider}`)
   // A lower level applies to the text already held too (rows in chat.db stay until /clear)
   if (logPrompts !== undefined) retrimAndAnnounce(`logPrompts ${settings.logPrompts}`)
-  res.json({ ok: true, ...settings })
+  res.json({ ok: true, ...settingsResponse() })
+})
+
+/**
+ * GET /llm/models?provider= — list models when the provider supports it (Ollama tags).
+ * Requires UI token. Timeout and response size limited inside the provider.
+ */
+app.get('/llm/models', requireUi, async (req, res) => {
+  const providerId = typeof req.query.provider === 'string' ? req.query.provider : settings.chatAi.provider
+  let provider
+  try {
+    provider = resolveProvider(providerId)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
+  }
+  if (typeof provider.listModels !== 'function') {
+    const meta = provider.metadata
+    return res.json({
+      provider: providerId,
+      models: meta.suggestedModels || [],
+      supportsListModels: false,
+    })
+  }
+  try {
+    const resolved = resolveChatAiConfig({ chatAi: { ...settings.chatAi, provider: providerId }, env: process.env })
+    const models = await provider.listModels({
+      baseUrl: resolved.baseUrl,
+      apiKeyEnv: resolved.apiKeyEnv,
+      timeoutMs: 10000,
+      officeHome: RUNTIME_DIR,
+    })
+    res.json({ provider: providerId, models, supportsListModels: true })
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'failed to list models', code: err.code })
+  }
+})
+
+/**
+ * POST /llm/health — light health or generate probe.
+ * Body: { probe?: 'light'|'generate', provider?, model?, baseUrl?, apiKeyEnv? }
+ * Requires UI token. Never returns secret values.
+ */
+app.post('/llm/health', requireUi, async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {}
+  const probe = body.probe === 'generate' ? 'generate' : 'light'
+  try {
+    const patch = {
+      ...settings.chatAi,
+      ...(body.provider !== undefined ? { provider: body.provider } : {}),
+      ...(body.model !== undefined ? { model: body.model } : {}),
+      ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+      ...(body.apiKeyEnv !== undefined ? { apiKeyEnv: body.apiKeyEnv } : {}),
+    }
+    const stored = normalizeStoredChatAi(patch, { previous: settings.chatAi })
+    const resolved = resolveChatAiConfig({ chatAi: stored, env: process.env })
+    const provider = resolveProvider(resolved.provider)
+    if (typeof provider.health !== 'function') {
+      return res.json({
+        configured: true,
+        reachable: 'unknown',
+        authenticated: 'unknown',
+        modelAvailable: 'unknown',
+        ready: 'unknown',
+        detail: 'Provider has no health check',
+        mayConsumeTokens: false,
+      })
+    }
+    const result = await provider.health({
+      probe,
+      baseUrl: resolved.baseUrl,
+      apiKeyEnv: resolved.apiKeyEnv,
+      model: resolved.model,
+      timeoutMs: Math.min(resolved.timeoutSec * 1000, probe === 'generate' ? 60000 : 15000),
+      officeHome: RUNTIME_DIR,
+    })
+    // Strip any accidental secret-looking fields
+    const { configured, reachable, authenticated, modelAvailable, ready, detail, hint, mayConsumeTokens, mayConsumeLocalResources } = result
+    res.json({
+      configured, reachable, authenticated, modelAvailable, ready,
+      detail, hint, mayConsumeTokens: !!mayConsumeTokens,
+      mayConsumeLocalResources: !!mayConsumeLocalResources,
+      provider: resolved.provider,
+      model: resolved.model,
+    })
+  } catch (err) {
+    res.status(400).json({
+      configured: false,
+      reachable: 'unknown',
+      authenticated: 'unknown',
+      modelAvailable: 'unknown',
+      ready: false,
+      detail: err.message || 'health check failed',
+      code: err.code,
+    })
+  }
 })
 
 /**

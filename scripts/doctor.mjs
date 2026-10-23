@@ -417,6 +417,64 @@ export function checkDist({ root, port = DEFAULT_PORT }) {
   return result(WARN, 'dist/: not built — npm run build for the one-port page, or npm run dev for the Vite dev server on :3333')
 }
 
+/**
+ * Chat AI multi-provider config: settings.json chatAi + API key / claude on PATH.
+ * Does not print secret values.
+ */
+export function checkChatAi({ officeHome, env = process.env }) {
+  const settingsPath = join(officeHome, 'settings.json')
+  let chatAi = { provider: 'claude-cli', model: 'claude-haiku-5-5', apiKeyEnv: null }
+  const saved = readJson(settingsPath)
+  if (saved.value?.chatAi && typeof saved.value.chatAi === 'object') {
+    chatAi = { ...chatAi, ...saved.value.chatAi }
+  }
+  const provider = env.CHAT_AI_PROVIDER || chatAi.provider || 'claude-cli'
+  const model = env.CHAT_AI_MODEL || chatAi.model || '?'
+  const apiKeyEnv = env.CHAT_AI_API_KEY_ENV || chatAi.apiKeyEnv
+
+  if (provider === 'claude-cli') {
+    const onPath = (env.PATH || '').split(delimiter).some((dir) => {
+      try {
+        accessSync(join(dir, process.platform === 'win32' ? 'claude.cmd' : 'claude'), constants.X_OK)
+        return true
+      } catch {
+        try {
+          return existsSync(join(dir, 'claude')) || existsSync(join(dir, 'claude.exe'))
+        } catch {
+          return false
+        }
+      }
+    })
+    return onPath
+      ? result(PASS, `chat AI: ${provider} / ${model}`)
+      : result(WARN, `chat AI: ${provider} / ${model} - claude not found on PATH (switch provider in settings or install Claude Code)`)
+  }
+
+  if (provider === 'ollama') {
+    return result(PASS, `chat AI: ${provider} / ${model} - ensure Ollama is running (ollama serve)`)
+  }
+
+  if (apiKeyEnv) {
+    const fromEnv = typeof env[apiKeyEnv] === 'string' && env[apiKeyEnv].trim() !== ''
+    let fromFile = false
+    for (const p of [join(officeHome, '.env'), join(homedir(), '.env')]) {
+      if (!existsSync(p)) continue
+      try {
+        const text = readFileSync(p, 'utf8')
+        const line = text.split(/\r?\n/).find((l) => l.startsWith(`${apiKeyEnv}=`))
+        if (line && line.slice(apiKeyEnv.length + 1).trim() !== '') fromFile = true
+      } catch {}
+    }
+    if (fromEnv || fromFile) {
+      return result(PASS, `chat AI: ${provider} / ${model} (${apiKeyEnv} configured)`)
+    }
+    return result(WARN, `chat AI: ${provider} / ${model} - missing ${apiKeyEnv}`,
+      `export ${apiKeyEnv}="your-key" or add it to ${join(officeHome, '.env')} (chmod 600)`)
+  }
+
+  return result(PASS, `chat AI: ${provider} / ${model}`)
+}
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -458,6 +516,7 @@ export async function runDoctor(opts = {}) {
   results.push(...server.results)
   results.push(checkToken({ officeHome, serverUp: server.up }))
   results.push(checkDist({ root, port }))
+  results.push(checkChatAi({ officeHome, env }))
 
   return {
     results,

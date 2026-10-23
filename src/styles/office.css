@@ -1662,3 +1662,99 @@
   border-bottom: 1px solid #35363a;
   -webkit-app-region: no-drag;
 }
+
+.slack-provider-pill {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 2px 6px;
+  margin-left: 4px;
+  border-radius: 3px;
+  border: 1px solid #3d4045;
+  background: #232529;
+  color: #c7c8ca;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.slack-provider-pill:hover { border-color: #5a5d63; color: #fff; }
+
+.slack-chatai-panel {
+  padding: 8px 12px 10px;
+  background: #15171a;
+  border-bottom: 1px solid #35363a;
+  font-size: 11px;
+  color: #c7c8ca;
+  -webkit-app-region: no-drag;
+}
+.slack-chatai-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.slack-chatai-row > span {
+  flex: 0 0 56px;
+  color: #8b8d91;
+}
+.slack-chatai-row select,
+.slack-chatai-row input {
+  flex: 1;
+  min-width: 0;
+  background: #1a1d21;
+  border: 1px solid #3d4045;
+  color: #e8e8e8;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.slack-chatai-keyhint {
+  margin-bottom: 6px;
+  color: #8b8d91;
+}
+.slack-chatai-keyhint code { color: #d0d2d6; }
+.slack-chatai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.slack-chatai-actions button {
+  background: #2a2d32;
+  border: 1px solid #3d4045;
+  color: #e8e8e8;
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.slack-chatai-actions button:hover { border-color: #5a5d63; }
+.slack-chatai-health {
+  margin-top: 4px;
+  color: #a0a2a6;
+  word-break: break-word;
+}
+.slack-chatai-hint {
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.slack-chatai-hint code {
+  flex: 1;
+  font-size: 10px;
+  color: #ffd166;
+  word-break: break-all;
+}
+.slack-chatai-hint button {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 2px 6px;
+  background: #2a2d32;
+  border: 1px solid #3d4045;
+  color: #e8e8e8;
+  border-radius: 3px;
+  cursor: pointer;
+}

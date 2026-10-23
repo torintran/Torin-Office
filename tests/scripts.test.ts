@@ -29,9 +29,11 @@ const LOG_ARGS = `python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' 
 // thinks for $FAKE_CLAUDE_DIR/delay seconds when that file exists (writing
 // the pid of its `sleep` too), then answers from $FAKE_CLAUDE_DIR/mode — "ok"
 // prints a reply, "empty" fails like a CLI that is not logged in.
+// Prefer a real Python on Windows (Store python3 stub fails); Linux CI keeps python3.
+const LOG_ARGS_PY = `py=python3; python3 -c 'import sys' >/dev/null 2>&1 || py=python; "$py" -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"`
 const FAKE_CLAUDE = `
 dir="\${FAKE_CLAUDE_DIR:?}"
-${LOG_ARGS} >> "$dir/calls.jsonl"
+${LOG_ARGS_PY} >> "$dir/calls.jsonl"
 echo $$ >> "$dir/claude.pids"
 delay=$(cat "$dir/delay" 2>/dev/null || echo 0)
 if [ "$delay" != 0 ]; then
@@ -131,6 +133,8 @@ async function startWatcher(opts: { maxPerMinute?: number; staleLock?: boolean; 
   const home = tempDir('agent-office-script-home-')
   const bin = join(home, 'bin')
   fakeBin(bin, 'claude', FAKE_CLAUDE)
+  // Windows: put a working python3 shim ahead of the Store stub
+  fakeBin(bin, 'python3', `exec python "$@"`)
   const claudeDir = join(home, 'fake-claude')
   mkdirSync(claudeDir)
   writeFileSync(join(claudeDir, 'mode'), 'ok')
@@ -138,12 +142,13 @@ async function startWatcher(opts: { maxPerMinute?: number; staleLock?: boolean; 
   if (opts.staleLock) writeFileSync(join(office.dir, 'chat-ai.lock'), '')
   if (opts.lastTs !== undefined) writeFileSync(join(office.dir, 'chat-ai-last-ts'), opts.lastTs)
 
+  const pathSep = process.platform === 'win32' ? ';' : ':'
   const watcher = run('bash', [WATCHER], {
     ...process.env,
     HOME: home,
     AGENT_OFFICE_HOME: office.dir,
     AGENT_OFFICE_PORT: String(port),
-    PATH: `${bin}:${process.env.PATH}`,
+    PATH: `${bin}${pathSep}${process.env.PATH}`,
     FAKE_CLAUDE_DIR: claudeDir,
     CHAT_AI_POLL_INTERVAL: '0.2',
     CHAT_AI_MAX_REPLIES_PER_MIN: String(opts.maxPerMinute ?? 50),
@@ -193,6 +198,7 @@ describe('chat-ai-watcher.sh', () => {
 
     const args = claudeCalls(w)[0]
     expect(args.slice(0, 2)).toEqual(['-p', expect.stringContaining('You are responding as Debugger, the office debugger')])
+    expect(args[1]).toContain('---')
     expect(args[1]).toContain('Antony: hey there is a bug in login')
     for (const flag of ['--max-turns', '--model', '--safe-mode', '--strict-mcp-config', '--tools', '--no-session-persistence', '--name']) {
       expect(args, `missing ${flag}`).toContain(flag)
@@ -274,16 +280,16 @@ describe('chat-ai-watcher.sh lock', () => {
 
   // Two watcher round trips through a fake `claude -p` in one test: give it
   // room under full-suite load, where 8 s waits have timed out
-  it('clears a stale lock at startup, and an empty/failed `claude -p` neither posts nor leaves the lock behind', async () => {
+  it('clears a stale lock at startup, and an empty/failed generate neither posts nor leaves the lock behind', async () => {
     const waitFor = <T,>(what: string, fn: () => T | Promise<T>) => waitForWithin(what, fn, 20_000)
     const lock = join(w.office.dir, 'chat-ai.lock')
     expect(existsSync(lock)).toBe(false)
 
     writeFileSync(join(w.claudeDir, 'mode'), 'empty')
     await say(w, 'there is a bug in checkout')
-    await waitFor('the empty-reply log line', () => w.watcher.out.includes('Empty reply from claude'))
+    await waitFor('the empty-reply log line', () => w.watcher.out.includes('Generate failed'))
     expect(claudeCalls(w)).toHaveLength(1)
-    expect(w.watcher.out).toContain('claude: Not logged in')
+    expect(w.watcher.out).toMatch(/Not logged in|CLI_ERROR|EMPTY/)
     // The watcher prints the empty-reply line inside do_reply and removes the
     // lock when it returns, so the log line can arrive a few ms before the
     // file is gone: wait for the release rather than asserting it at once
@@ -361,7 +367,7 @@ describe('chat-ai-watcher.sh stopped mid-reply', () => {
       expect(code).toBe(0)
       expect(out).toContain(`Chat watcher stopped (pid ${w.watcher.pid})`)
       await waitFor('the in-flight claude -p to be gone', () => !alive(claude) && !alive(think), 5000)
-      expect(existsSync(join(w.office.dir, 'chat-ai-claude.err'))).toBe(false)
+      expect(existsSync(join(w.office.dir, 'chat-ai-generate.err'))).toBe(false)
     } finally {
       await w.watcher.stop()
       removeOffice(w.office)

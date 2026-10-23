@@ -152,7 +152,7 @@ Claude Code ──hooks + status line──> Express Server ──WebSocket─�
                                           │
                                     SQLite (chat)
                                           │
-                                  Chat AI Watcher ──claude -p──> Reply
+                                  Chat AI Watcher ──generate.mjs──> Reply
 ```
 
 ## Quick Start
@@ -276,7 +276,7 @@ Agents can also message each other directly — see [Agent-to-agent messages](do
 - **Frontend**: React + TypeScript + Vite
 - **Server**: Express + WebSocket (ws)
 - **Storage**: SQLite (better-sqlite3)
-- **Chat AI**: Claude CLI (`claude -p`)
+- **Chat AI**: Multi-provider (`claude-cli`, DeepSeek, Ollama, OpenAI-compatible) via `server/llm/` + `scripts/chat-ai-generate.mjs`
 - **Sprites**: Custom pixel art (isometric)
 - **Desktop**: Electron (optional)
 - **Tests**: Vitest, run in CI on every pull request
@@ -292,12 +292,13 @@ Claude-Office/
 │   └── App.tsx             # Main app
 ├── server/                 # Express + WebSocket server
 │   ├── index.js            # HTTP endpoints + WS broadcast
+│   ├── llm/                # Multi-provider LLM layer
 │   └── chat-db.js          # SQLite wrapper
 ├── hooks/                  # Claude Code hooks
 │   ├── agent-tracker.sh    # Forwards events to the server
 │   ├── status-line.sh      # Feeds the meters
 │   └── install-hooks.sh    # npm run install-hooks
-├── scripts/                # start / stop / doctor / chat watcher
+├── scripts/                # start / stop / doctor / chat watcher / generate
 ├── electron/               # Desktop app
 ├── public/sprites/         # Pixel art characters + effects
 └── docs/                   # Reference + images

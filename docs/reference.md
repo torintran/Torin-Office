@@ -194,7 +194,16 @@ Requirements everywhere: Node 22 (what CI runs; `better-sqlite3` is a native mod
 
 `start-office.sh` starts the server, Vite and the chat AI watcher, each in its own process group, and records their pids in `~/.agent-office/server.pid`, `vite.pid` and `chat-watcher.pid`. `stop-office.sh` stops exactly those processes — a browser holding a WebSocket to `:3334`, the Electron app or an unrelated Vite on `:3333` are never touched. If you started the server some other way, `bash scripts/stop-office.sh --force` additionally kills whatever is *listening* on the office ports. Ctrl+C in `start-office.sh` stops everything it started; on a box without `open`/`xdg-open` it prints the URL instead of aborting.
 
-The chat AI watcher (`scripts/chat-ai-watcher.sh`, log in `~/.agent-office/chat-ai.log`) only answers messages a person typed in the office chat — its own replies, the agents' `starting:`/`done:` announcements, agent-to-agent messages and `/commands` are never answered — and runs `claude -p` with `--max-turns 1 --model claude-haiku-5-5 --safe-mode --strict-mcp-config --tools "" --no-session-persistence` under a timeout, so a reply never fires the office's own hooks or loads your project's MCP servers. Knobs (all optional): `CHAT_AI_MODEL`, `CHAT_AI_TIMEOUT` (seconds, default 60), `CHAT_AI_MAX_REPLIES_PER_MIN` (default 5), `CHAT_AI_POLL_INTERVAL` (default 8). Every script honours `AGENT_OFFICE_HOME` (state dir) and `AGENT_OFFICE_PORT` (default 3334); `start-office.sh`/`stop-office.sh` also take `AGENT_OFFICE_UI_PORT` (default 3333). The server, the hook, the status line, the page and the desktop app read the same `AGENT_OFFICE_PORT`, so one export moves the whole office — see [Configuration](#configuration).
+The chat AI watcher (`scripts/chat-ai-watcher.sh`, log in `~/.agent-office/chat-ai.log`) only answers messages a person typed in the office chat — its own replies, the agents' `starting:`/`done:` announcements, agent-to-agent messages and `/commands` are never answered. It builds a **system** + **user** message pair and calls `scripts/chat-ai-generate.mjs` (JSON stdin/stdout), which uses `server/llm/` providers:
+
+| Provider | Default model | Notes |
+|---|---|---|
+| `claude-cli` | `claude-haiku-5-5` | Same safe CLI flags as before (`--safe-mode`, `--name agent-office-bot`, …) |
+| `deepseek` | `deepseek-flash` | Needs `DEEPSEEK_API_KEY` (env or `~/.agent-office/.env`) |
+| `ollama` | `llama3.2` | Default `http://127.0.0.1:11434/v1` |
+| `openai-compatible` | (required) | Custom `baseUrl` + model; API key optional |
+
+Configure via the chat panel provider pill (POST `/settings` `chatAi`) or env overrides: `CHAT_AI_PROVIDER`, `CHAT_AI_MODEL`, `CHAT_AI_BASE_URL`, `CHAT_AI_API_KEY_ENV`, `CHAT_AI_TIMEOUT` (seconds, default 60). Empty env overrides are rejected (no silent fallback). Also: `CHAT_AI_MAX_REPLIES_PER_MIN` (default 5), `CHAT_AI_POLL_INTERVAL` (default 8). API key **values** are never stored in `settings.json` — only the env var name. Prefer `chmod 600 ~/.agent-office/.env`. Health: `POST /llm/health` (`probe: light|generate`); models: `GET /llm/models?provider=ollama`. Every script honours `AGENT_OFFICE_HOME` and `AGENT_OFFICE_PORT` (default 3334); see [Configuration](#configuration).
 
 ## Running tests
 

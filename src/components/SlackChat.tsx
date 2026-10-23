@@ -2,8 +2,31 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { ROLE_TO_CHAR } from '../config'
 import { getSpritePath, useTheme, toggleTheme, getTheme, themedDisplayName } from '../theme'
 import IncidentBadge from './IncidentBadge'
-import { postSetting } from '../permissions'
+import { postSetting, postSettingJson, getWithUiToken, postWithUiTokenJson } from '../permissions'
 import { officeHttpBase } from '../serverUrl'
+
+interface ChatAiPublic {
+  provider: string
+  model: string
+  baseUrl: string | null
+  apiKeyEnv: string | null
+  timeoutSec: number
+  apiKeyConfigured?: boolean
+  needsApiKey?: boolean
+  supportsListModels?: boolean
+  suggestedModels?: string[]
+}
+
+interface ChatAiProviderMeta {
+  id: string
+  label: string
+  needsApiKey: boolean
+  supportsListModels: boolean
+  defaultModel: string | null
+  defaultBaseUrl: string | null
+  defaultApiKeyEnv: string | null
+  suggestedModels: string[]
+}
 
 export function getAvatarSrc(role: string, agentId?: string): string {
   const charBase = ROLE_TO_CHAR[role] ?? 'employee-3'
@@ -107,14 +130,93 @@ const SlackChat: React.FC<SlackChatProps> = ({ messages, muted, volume, onToggle
   // The same GET /settings also says whether permission dialogs may be answered here.
   const [logPrompts, setLogPrompts] = useState<string | null>(null)
   const [answerHere, setAnswerHere] = useState<boolean | null>(null)
+  const [chatAi, setChatAi] = useState<ChatAiPublic | null>(null)
+  const [chatAiProviders, setChatAiProviders] = useState<ChatAiProviderMeta[]>([])
+  const [showChatAi, setShowChatAi] = useState(false)
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [healthMsg, setHealthMsg] = useState<string | null>(null)
+  const [healthHint, setHealthHint] = useState<string | null>(null)
+  const [draftModel, setDraftModel] = useState('')
+  const [draftBaseUrl, setDraftBaseUrl] = useState('')
+
+  const applySettingsPayload = useCallback((d: Record<string, unknown> | null) => {
+    if (!d) return
+    if (typeof d.logPrompts === 'string') setLogPrompts(d.logPrompts)
+    if (typeof d.answerPermissions === 'boolean') setAnswerHere(d.answerPermissions)
+    if (d.chatAi && typeof d.chatAi === 'object') {
+      const c = d.chatAi as ChatAiPublic
+      setChatAi(c)
+      setDraftModel(c.model || '')
+      setDraftBaseUrl(c.baseUrl || '')
+    }
+    if (Array.isArray(d.chatAiProviders)) setChatAiProviders(d.chatAiProviders as ChatAiProviderMeta[])
+  }, [])
+
   useEffect(() => {
     fetch(SETTINGS_URL, { signal: AbortSignal.timeout(2000) })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => {
-        if (d && typeof d.logPrompts === 'string') setLogPrompts(d.logPrompts)
-        if (d && typeof d.answerPermissions === 'boolean') setAnswerHere(d.answerPermissions)
-      })
+      .then(d => applySettingsPayload(d))
       .catch(() => {})
+  }, [applySettingsPayload])
+
+  // When Ollama is selected, fetch pulled models for the dropdown
+  useEffect(() => {
+    if (!showChatAi || chatAi?.provider !== 'ollama' || readOnly) return
+    getWithUiToken('/llm/models?provider=ollama').then(d => {
+      const models = Array.isArray(d?.models) ? (d!.models as string[]) : []
+      setOllamaModels(models)
+    })
+  }, [showChatAi, chatAi?.provider, readOnly])
+
+  const saveChatAi = useCallback(async (patch: Record<string, unknown>) => {
+    const body = await postSettingJson({ chatAi: patch })
+    if (body) {
+      applySettingsPayload(body)
+      setHealthMsg(null)
+      setHealthHint(null)
+      return true
+    }
+    return false
+  }, [applySettingsPayload])
+
+  const onProviderChange = useCallback(async (provider: string) => {
+    await saveChatAi({ provider })
+  }, [saveChatAi])
+
+  const onSaveModelFields = useCallback(async () => {
+    if (!chatAi) return
+    await saveChatAi({
+      provider: chatAi.provider,
+      model: draftModel.trim(),
+      ...(chatAi.provider === 'ollama' || chatAi.provider === 'openai-compatible'
+        ? { baseUrl: draftBaseUrl.trim() || null }
+        : {}),
+    })
+  }, [chatAi, draftModel, draftBaseUrl, saveChatAi])
+
+  const runHealth = useCallback(async (probe: 'light' | 'generate') => {
+    if (probe === 'generate') {
+      const ok = window.confirm(
+        'This will call the model (may use API tokens or local CPU/GPU). Continue?',
+      )
+      if (!ok) return
+    }
+    setHealthMsg('Checking…')
+    setHealthHint(null)
+    const d = await postWithUiTokenJson('/llm/health', { probe }, probe === 'generate' ? 60000 : 15000)
+    if (!d) {
+      setHealthMsg('Health check failed')
+      return
+    }
+    const parts = [
+      `configured=${d.configured}`,
+      `reachable=${d.reachable}`,
+      `auth=${d.authenticated}`,
+      `model=${d.modelAvailable}`,
+      `ready=${d.ready}`,
+    ]
+    setHealthMsg(`${parts.join(' · ')}${d.detail ? ` — ${d.detail}` : ''}`)
+    if (typeof d.hint === 'string' && d.hint) setHealthHint(d.hint)
   }, [])
 
   // Answer permissions from the office (answerPermissions) — the one setting
@@ -200,6 +302,17 @@ const SlackChat: React.FC<SlackChatProps> = ({ messages, muted, volume, onToggle
             </div>
             <span className="slack-cron-label">{cronPaused ? 'AI Off' : 'AI On'}</span>
           </div>
+          {chatAi && (
+            <button
+              type="button"
+              className="slack-provider-pill"
+              data-testid="chat-ai-provider"
+              title="Chat AI provider settings"
+              onClick={() => setShowChatAi(v => !v)}
+            >
+              {chatAi.provider} · {chatAi.model}
+            </button>
+          )}
           <button className="slack-mute-btn" onClick={onToggleMute}>
             {muted ? '🔇' : volume < 0.4 ? '🔈' : '🔊'}
           </button>
@@ -236,6 +349,85 @@ const SlackChat: React.FC<SlackChatProps> = ({ messages, muted, volume, onToggle
             >
               Answer here: {answerHere ? 'on' : 'off'}
             </span>
+          )}
+        </div>
+      )}
+
+      {showChatAi && chatAi && !readOnly && (
+        <div className="slack-chatai-panel" data-testid="chat-ai-panel">
+          <label className="slack-chatai-row">
+            <span>Provider</span>
+            <select
+              value={chatAi.provider}
+              onChange={e => onProviderChange(e.target.value)}
+              data-testid="chat-ai-provider-select"
+            >
+              {(chatAiProviders.length ? chatAiProviders : [
+                { id: 'claude-cli', label: 'Claude CLI' },
+                { id: 'deepseek', label: 'DeepSeek' },
+                { id: 'ollama', label: 'Ollama' },
+                { id: 'openai-compatible', label: 'OpenAI-compatible' },
+              ]).map(p => (
+                <option key={p.id} value={p.id}>{p.label || p.id}</option>
+              ))}
+            </select>
+          </label>
+          <label className="slack-chatai-row">
+            <span>Model</span>
+            {chatAi.provider === 'ollama' && ollamaModels.length > 0 ? (
+              <select
+                value={draftModel}
+                onChange={e => setDraftModel(e.target.value)}
+                data-testid="chat-ai-model-select"
+              >
+                {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              <input
+                value={draftModel}
+                onChange={e => setDraftModel(e.target.value)}
+                list="chat-ai-suggested-models"
+                placeholder="model id"
+                data-testid="chat-ai-model-input"
+              />
+            )}
+            <datalist id="chat-ai-suggested-models">
+              {(chatAi.suggestedModels || []).map(m => <option key={m} value={m} />)}
+            </datalist>
+          </label>
+          {(chatAi.provider === 'ollama' || chatAi.provider === 'openai-compatible') && (
+            <label className="slack-chatai-row">
+              <span>Base URL</span>
+              <input
+                value={draftBaseUrl}
+                onChange={e => setDraftBaseUrl(e.target.value)}
+                placeholder={chatAi.provider === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://…/v1'}
+                data-testid="chat-ai-baseurl"
+              />
+            </label>
+          )}
+          {chatAi.apiKeyEnv && (
+            <div className="slack-chatai-keyhint">
+              Key env: <code>{chatAi.apiKeyEnv}</code>
+              {chatAi.apiKeyConfigured ? ' (set)' : ' (missing)'}
+            </div>
+          )}
+          <div className="slack-chatai-actions">
+            <button type="button" onClick={onSaveModelFields}>Save</button>
+            <button type="button" onClick={() => runHealth('light')}>Check</button>
+            <button type="button" onClick={() => runHealth('generate')}>Test generate</button>
+          </div>
+          {healthMsg && <div className="slack-chatai-health" data-testid="chat-ai-health">{healthMsg}</div>}
+          {healthHint && (
+            <div className="slack-chatai-hint">
+              <code>{healthHint}</code>
+              <button
+                type="button"
+                onClick={() => { void navigator.clipboard?.writeText(healthHint) }}
+              >
+                Copy
+              </button>
+            </div>
           )}
         </div>
       )}

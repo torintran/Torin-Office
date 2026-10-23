@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# chat-ai-watcher.sh — Watches office chat and replies as Claude
+# chat-ai-watcher.sh — Watches office chat and replies via multi-provider LLM
 # Started by start-office.sh, stopped by stop-office.sh
 #
 # Only messages a person typed into the office chat are answered. The server
 # stores those with role 'default', is_system 0 and no recipient; the
 # watcher's own replies and the server's "starting: / done:" announcements
 # carry an agent role, and agent-to-agent messages carry a recipient, so none
-# of them can trigger another `claude -p` call.
+# of them can trigger another generate call.
+#
+# Generation goes through scripts/chat-ai-generate.mjs (JSON stdin/stdout).
+# Provider/model come from GET /settings chatAi + CHAT_AI_* env overrides.
 #
 # Environment (all optional):
 #   AGENT_OFFICE_HOME            state dir            (default ~/.agent-office)
 #   AGENT_OFFICE_PORT            office server port   (default 3334)
 #   CHAT_AI_POLL_INTERVAL        seconds between polls (default 8)
-#   CHAT_AI_MODEL                model for `claude -p` (default claude-haiku-5-5)
-#   CHAT_AI_TIMEOUT              seconds before a `claude -p` call is killed (default 60)
+#   CHAT_AI_PROVIDER             override provider id
+#   CHAT_AI_MODEL                override model
+#   CHAT_AI_BASE_URL             override base URL
+#   CHAT_AI_API_KEY_ENV          override API key env name
+#   CHAT_AI_TIMEOUT              seconds before generate is killed (default 60)
 #   CHAT_AI_MAX_REPLIES_PER_MIN  backstop against reply loops (default 5)
 # =============================================================================
 
@@ -23,7 +29,6 @@ set -u
 PORT="${AGENT_OFFICE_PORT:-3334}"
 SERVER="http://127.0.0.1:$PORT"
 POLL_INTERVAL="${CHAT_AI_POLL_INTERVAL:-8}"
-MODEL="${CHAT_AI_MODEL:-claude-haiku-5-5}"
 CLAUDE_TIMEOUT="${CHAT_AI_TIMEOUT:-60}"
 MAX_REPLIES_PER_MIN="${CHAT_AI_MAX_REPLIES_PER_MIN:-5}"
 
@@ -31,33 +36,25 @@ STATE_DIR="${AGENT_OFFICE_HOME:-$HOME/.agent-office}"
 PID_FILE="$STATE_DIR/chat-watcher.pid"
 LAST_TS_FILE="$STATE_DIR/chat-ai-last-ts"
 LOCK_FILE="$STATE_DIR/chat-ai.lock"
-ERR_FILE="$STATE_DIR/chat-ai-claude.err"
+ERR_FILE="$STATE_DIR/chat-ai-generate.err"
+GEN_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/chat-ai-generate.mjs"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Flags for every `claude -p` call:
-#   --safe-mode           no hooks, CLAUDE.md, MCP servers, skills or plugins —
-#                         the office's own agent-tracker hook must not fire for
-#                         each reply, and no project MCP server should start.
-#                         (--bare also skips hooks but only accepts an API key,
-#                         not the OAuth login most people use.)
-#   --strict-mcp-config   belt and braces: ignore every MCP config not given
-#                         on the command line (and none is).
-#   --tools ""            nothing to call, so --max-turns 1 always ends in text.
-#   --no-session-persistence  do not litter ~/.claude with one-shot sessions.
-#   --name agent-office-bot   every `claude -p` registers in Claude Code's
-#                         session registry (~/.claude/sessions) for as long as
-#                         it runs, and the office reads that registry to show
-#                         sessions that have no hooks (server/sessions.js). The
-#                         name marks these calls as the office's own so they
-#                         never flicker through the session strip; keep it in
-#                         step with BOT_SESSION_NAME there.
-CLAUDE_ARGS=(--max-turns 1 --model "$MODEL" --safe-mode --strict-mcp-config --tools "" --no-session-persistence --name agent-office-bot)
+# Prefer python3; on Windows the Store stub named python3 often fails — fall back to python.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+    PYTHON=python
+else
+    PYTHON=python3
+fi
 
 mkdir -p "$STATE_DIR"
-echo $$ > "$PID_FILE"
-# A lock left behind by a crashed or SIGKILLed watcher must not block this one
+# A lock left behind by a crashed or SIGKILLed watcher must not block this one.
+# Clear it before writing the pid file so waiters that see the pid never observe a stale lock.
 rm -f "$LOCK_FILE"
+echo $$ > "$PID_FILE"
 
 # The watermark: the newest chat row (ms epoch) the watcher has seen. It is
 # replaced through a temp file and a rename, so a crash mid-write cannot
@@ -83,8 +80,21 @@ if [ -z "$LAST_TS" ]; then
     save_last_ts
 fi
 
-echo "[chat-ai] Started (pid $$), polling $SERVER every ${POLL_INTERVAL}s, model $MODEL"
-command -v claude >/dev/null 2>&1 || echo "[chat-ai] Warning: 'claude' CLI not on PATH — messages will be seen but not answered"
+# Load provider/model label for startup log (best-effort)
+CHAT_AI_LABEL=$(curl -sf "$SERVER/settings" 2>/dev/null | "$PYTHON" -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    c = d.get('chatAi') or {}
+    print(f\"{c.get('provider', 'claude-cli')} · {c.get('model', '?')}\")
+except Exception:
+    print('claude-cli · ?')
+" 2>/dev/null || echo "claude-cli · ?")
+
+echo "[chat-ai] Started (pid $$), polling $SERVER every ${POLL_INTERVAL}s, $CHAT_AI_LABEL"
+if [ ! -f "$GEN_SCRIPT" ]; then
+    echo "[chat-ai] Warning: $GEN_SCRIPT missing — messages will be seen but not answered"
+fi
 
 cleanup() { trap - EXIT INT TERM; rm -f "$PID_FILE" "$LOCK_FILE" "$ERR_FILE" "$LAST_TS_FILE.tmp"; echo "[chat-ai] Stopped"; exit 0; }
 trap cleanup EXIT INT TERM
@@ -96,7 +106,7 @@ trap cleanup EXIT INT TERM
 #
 # The command must stay in the watcher's process group: stop-office.sh and
 # start-office.sh's Ctrl+C stop the watcher with a kill of its whole group,
-# and that is what takes an in-flight `claude -p` down with it. GNU timeout
+# and that is what takes an in-flight generate down with it. GNU timeout
 # moves itself and the command into a group of their own unless given
 # --foreground, so without it the reply runs on (and bills) for up to
 # CHAT_AI_TIMEOUT after the office says it stopped. A timeout without the
@@ -118,7 +128,7 @@ run_with_timeout() {
     fi
 }
 
-# Reply-rate backstop: epoch seconds of the `claude -p` calls made in the last
+# Reply-rate backstop: epoch seconds of generate calls made in the last
 # minute, so a misclassified message can never burn tokens indefinitely.
 CALL_TIMES=""
 rate_cap_hit() {
@@ -130,11 +140,11 @@ rate_cap_hit() {
     CALL_TIMES="$keep"
     [ "$n" -ge "$MAX_REPLIES_PER_MIN" ]
 }
-record_claude_call() { CALL_TIMES="$CALL_TIMES $(date +%s)"; }
+record_generate_call() { CALL_TIMES="$CALL_TIMES $(date +%s)"; }
 
 # Keyword routing: which office persona answers.
 route_message() {
-    printf '%s' "$1" | python3 -c "
+    printf '%s' "$1" | "$PYTHON" -c "
 import sys
 msg = sys.stdin.read().lower()
 routes = [
@@ -160,16 +170,52 @@ print('assistant|Claude')
 "
 }
 
+# Load chatAi config from server settings (JSON one line for bash).
+load_chat_ai_config() {
+    curl -sf "$SERVER/settings" 2>/dev/null | "$PYTHON" -c "
+import sys, json, os
+try:
+    d = json.load(sys.stdin)
+    c = d.get('chatAi') or {}
+except Exception:
+    c = {}
+provider = os.environ.get('CHAT_AI_PROVIDER') or c.get('provider') or 'claude-cli'
+model = os.environ.get('CHAT_AI_MODEL') or c.get('model') or 'claude-haiku-5-5'
+base = os.environ.get('CHAT_AI_BASE_URL')
+if base is None:
+    base = c.get('baseUrl')
+api_key_env = os.environ.get('CHAT_AI_API_KEY_ENV')
+if api_key_env is None:
+    api_key_env = c.get('apiKeyEnv')
+timeout = os.environ.get('CHAT_AI_TIMEOUT') or c.get('timeoutSec') or 60
+out = {
+    'provider': provider,
+    'model': model,
+    'baseUrl': base,
+    'apiKeyEnv': api_key_env,
+    'timeoutSec': int(timeout),
+}
+print(json.dumps(out))
+" 2>/dev/null || echo '{"provider":"claude-cli","model":"claude-haiku-5-5","baseUrl":null,"apiKeyEnv":null,"timeoutSec":60}'
+}
+
 # Generate and post one reply. Returns non-zero when nothing was posted; the
 # caller (reply_to_message) clears the lock either way.
 do_reply() {
     local msg="$1"
-    local agent_info agent_role agent_name dev_context persona context prompt reply posted
+    local agent_info agent_role agent_name dev_context persona context
+    local system_prompt user_prompt gen_in gen_out gen_rc reply posted cfg
+    local provider model timeout_sec
 
     agent_info=$(route_message "$msg")
     agent_role=${agent_info%%|*}
     agent_name=${agent_info#*|}
     echo "[chat-ai] Routed to: $agent_name ($agent_role)"
+
+    cfg=$(load_chat_ai_config)
+    provider=$(printf '%s' "$cfg" | "$PYTHON" -c "import sys,json; print(json.load(sys.stdin).get('provider','claude-cli'))")
+    model=$(printf '%s' "$cfg" | "$PYTHON" -c "import sys,json; print(json.load(sys.stdin).get('model','claude-haiku-5-5'))")
+    timeout_sec=$(printf '%s' "$cfg" | "$PYTHON" -c "import sys,json; print(int(json.load(sys.stdin).get('timeoutSec') or 60))")
 
     # Gather dev context
     dev_context=$(bash "$SCRIPT_DIR/gather-context.sh" 2>/dev/null || echo "")
@@ -181,7 +227,7 @@ do_reply() {
     fi
 
     # Fetch last 10 messages for context
-    context=$(curl -sf "$SERVER/chat" 2>/dev/null | python3 -c "
+    context=$(curl -sf "$SERVER/chat" 2>/dev/null | "$PYTHON" -c "
 import sys, json
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])[-10:]
@@ -193,32 +239,87 @@ for m in msgs:
 print(chr(10).join(lines))
 " 2>/dev/null)
 
-    prompt="$persona
+    system_prompt="$persona
 
 You are responding as $agent_name, the office $agent_role. Stay in character.
+Reply naturally. Keep it short (8-12 words). Continue the conversation — reference previous messages if relevant."
 
-$dev_context
+    user_prompt="$dev_context
 
 Recent conversation:
 $context
 
-Reply to the latest message naturally. Keep it short (8-12 words). Continue the conversation — reference previous messages if relevant."
+Latest message to answer:
+$msg"
 
-    echo "[chat-ai] Generating reply..."
-    record_claude_call
-    reply=$(run_with_timeout "$CLAUDE_TIMEOUT" claude -p "$prompt" "${CLAUDE_ARGS[@]}" 2>"$ERR_FILE" \
-        | tr '\n' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    echo "[chat-ai] Generating reply ($provider · $model)..."
+    record_generate_call
 
-    if [ -z "$reply" ]; then
-        echo "[chat-ai] Empty reply from claude — nothing posted"
-        if [ -s "$ERR_FILE" ]; then sed 's/^/[chat-ai]   claude: /' "$ERR_FILE"; fi
-        rm -f "$ERR_FILE"
+    # Build generate JSON under STATE_DIR (not /tmp): on Git Bash, mktemp may
+    # yield an MSYS /tmp path that Windows Python cannot open.
+    gen_dir="$STATE_DIR/chat-ai-gen-$$"
+    rm -rf "$gen_dir"
+    mkdir -p "$gen_dir" || return 1
+    printf '%s' "$cfg" > "$gen_dir/cfg.json"
+    printf '%s' "$system_prompt" > "$gen_dir/system.txt"
+    printf '%s' "$user_prompt" > "$gen_dir/user.txt"
+    # Resolve to a path Python on this OS can open (cygpath -w when present).
+    gen_dir_py="$gen_dir"
+    if command -v cygpath >/dev/null 2>&1; then
+        gen_dir_py=$(cygpath -w "$gen_dir")
+    fi
+    "$PYTHON" -c "
+import json, pathlib
+d = pathlib.Path(r'''$gen_dir_py''')
+cfg = json.loads((d / 'cfg.json').read_text(encoding='utf-8'))
+payload = {
+    'provider': cfg.get('provider'),
+    'model': cfg.get('model'),
+    'baseUrl': cfg.get('baseUrl'),
+    'apiKeyEnv': cfg.get('apiKeyEnv'),
+    'timeoutMs': int(cfg.get('timeoutSec') or 60) * 1000,
+    'messages': [
+        {'role': 'system', 'content': (d / 'system.txt').read_text(encoding='utf-8')},
+        {'role': 'user', 'content': (d / 'user.txt').read_text(encoding='utf-8')},
+    ],
+}
+(d / 'in.json').write_text(json.dumps(payload), encoding='utf-8')
+" || { rm -rf "$gen_dir"; return 1; }
+
+    gen_rc=0
+    gen_out=$(run_with_timeout "$timeout_sec" node "$GEN_SCRIPT" < "$gen_dir/in.json" 2>"$ERR_FILE") || gen_rc=$?
+
+    reply=$(printf '%s' "$gen_out" | "$PYTHON" -c "
+import sys, json
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(1)
+try:
+    data = json.loads(raw.splitlines()[-1])
+except Exception:
+    sys.exit(1)
+if not data.get('ok') or not isinstance(data.get('text'), str) or not data['text'].strip():
+    err = data.get('error') or {}
+    code = err.get('code', 'UNKNOWN')
+    msg = err.get('message', '')
+    print(f'{code}|{msg}', file=sys.stderr)
+    sys.exit(1)
+print(data['text'].strip())
+" 2>"$ERR_FILE.msg") || true
+
+    rm -rf "$gen_dir"
+
+    if [ -z "${reply:-}" ]; then
+        err_line=$(tr '\n' ' ' < "$ERR_FILE.msg" 2>/dev/null || true)
+        echo "[chat-ai] Generate failed ($provider) — ${err_line:-exit $gen_rc}; nothing posted"
+        if [ -s "$ERR_FILE" ]; then sed 's/^/[chat-ai]   gen: /' "$ERR_FILE"; fi
+        rm -f "$ERR_FILE" "$ERR_FILE.msg"
         return 1
     fi
-    rm -f "$ERR_FILE"
+    rm -f "$ERR_FILE" "$ERR_FILE.msg"
 
     # Truncate to 15 words max
-    reply=$(printf '%s' "$reply" | python3 -c "import sys; w=sys.stdin.read().strip().split(); print(' '.join(w[:15]))")
+    reply=$(printf '%s' "$reply" | "$PYTHON" -c "import sys; w=sys.stdin.read().strip().split(); print(' '.join(w[:15]))")
 
     echo "[chat-ai] Replying as $agent_name: $reply"
 
@@ -227,12 +328,12 @@ Reply to the latest message naturally. Keep it short (8-12 words). Continue the 
     # the server writes once it is up — the same one the hook reads).
     #
     # The watermark is not moved past the reply: it stays at the newest row
-    # seen before generating, so a message typed while `claude -p` was
+    # seen before generating, so a message typed while generate was
     # thinking is still ahead of it and is answered on the next poll. The
     # reply itself comes back on that poll too, but it carries an agent role,
     # which typed_by_a_person never answers, and the poll moves the watermark
     # past it.
-    posted=$(CHAT_SERVER="$SERVER" CHAT_REPLY="$reply" CHAT_ROLE="$agent_role" CHAT_SENDER="$agent_name" CHAT_TOKEN_FILE="$STATE_DIR/auth-token" python3 -c "
+    posted=$(CHAT_SERVER="$SERVER" CHAT_REPLY="$reply" CHAT_ROLE="$agent_role" CHAT_SENDER="$agent_name" CHAT_TOKEN_FILE="$STATE_DIR/auth-token" "$PYTHON" -c "
 import urllib.request, json, os
 server = os.environ['CHAT_SERVER']
 data = json.dumps({
@@ -265,12 +366,19 @@ except Exception as e:
 
 # Hold the lock only while a reply is being generated; it is dropped on every
 # exit path (and by the EXIT trap), so an empty or failed reply can never wedge
-# the watcher.
+# the watcher. Lock ownership lives here — not in trap EXIT alone (EXIT runs
+# when the watcher process ends, not after each do_reply).
 reply_to_message() {
-    touch "$LOCK_FILE"
+    printf '%s\n' "$$" > "$LOCK_FILE"
     do_reply "$1"
     local rc=$?
-    rm -f "$LOCK_FILE"
+    # Only remove if we still own the lock
+    if [ -f "$LOCK_FILE" ]; then
+        lock_pid=$(tr -d '[:space:]' < "$LOCK_FILE" 2>/dev/null || true)
+        if [ "$lock_pid" = "$$" ] || [ -z "$lock_pid" ]; then
+            rm -f "$LOCK_FILE"
+        fi
+    fi
     return $rc
 }
 
@@ -283,7 +391,7 @@ while true; do
     curl -sf "$SERVER/health" > /dev/null 2>&1 || continue
 
     # Check AI toggle
-    IS_PAUSED=$(curl -sf "$SERVER/chat/cron-state" 2>/dev/null | python3 -c "import sys,json; print('true' if json.load(sys.stdin).get('paused') else 'false')" 2>/dev/null || echo "true")
+    IS_PAUSED=$(curl -sf "$SERVER/chat/cron-state" 2>/dev/null | "$PYTHON" -c "import sys,json; print('true' if json.load(sys.stdin).get('paused') else 'false')" 2>/dev/null || echo "true")
     [ "$IS_PAUSED" = "true" ] && continue
 
     # Fetch messages since last seen
@@ -291,7 +399,7 @@ while true; do
 
     # Line 1: newest timestamp seen (0 if none). Line 2: the latest message a
     # person typed (empty if none) — newlines flattened so it stays one line.
-    PARSED=$(printf '%s' "$RESPONSE" | python3 -c '
+    PARSED=$(printf '%s' "$RESPONSE" | "$PYTHON" -c '
 import sys, json
 try:
     msgs = json.load(sys.stdin).get("messages", [])
@@ -324,7 +432,7 @@ print(human[-1]["text"].replace("\n", " ").replace("\r", " ") if human else "")
     # Skip if no new message from a person
     [ -z "$RESULT" ] && continue
 
-    # Skip if already generating a reply (prevent concurrent claude -p)
+    # Skip if already generating a reply (prevent concurrent generate)
     if [ -f "$LOCK_FILE" ]; then
         echo "[chat-ai] Skipping — already generating a reply"
         continue
@@ -335,8 +443,8 @@ print(human[-1]["text"].replace("\n", " ").replace("\r", " ") if human else "")
         continue
     fi
 
-    if ! command -v claude >/dev/null 2>&1; then
-        echo "[chat-ai] 'claude' CLI not on PATH — not answering: $RESULT"
+    if [ ! -f "$GEN_SCRIPT" ]; then
+        echo "[chat-ai] generate script missing — not answering: $RESULT"
         continue
     fi
 
