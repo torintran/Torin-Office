@@ -23,6 +23,7 @@
     "electron": "electron .",
     "start": "npm run dev:electron",
     "server": "node server/index.js",
+    "chat-ai": "node scripts/chat-ai-watcher.mjs",
     "open": "node scripts/open-office.mjs",
     "rotate-token": "node scripts/rotate-token.mjs",
     "test": "vitest run",
@@ -31,6 +32,8 @@
     "install-hooks": "bash hooks/install-hooks.sh",
     "install-status-line": "bash hooks/install-hooks.sh --status-line-only",
     "uninstall-hooks": "bash hooks/install-hooks.sh --uninstall",
+    "install-opencode": "node scripts/install-opencode.mjs",
+    "uninstall-opencode": "node scripts/uninstall-opencode.mjs",
     "doctor": "node scripts/doctor.mjs",
     "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin/plugin.json"
   },

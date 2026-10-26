@@ -3,6 +3,7 @@
 Everything the [README](../README.md) leaves out: how the hooks work, every setting, the security model and the details behind each feature.
 
 - [Connect Claude Code](#connect-claude-code)
+- [Connect OpenCode](#connect-opencode)
 - [Platform support](#platform-support)
 - [The start/stop scripts](#the-startstop-scripts)
 - [Running tests](#running-tests)
@@ -150,6 +151,28 @@ In the office that record is one Claude per terminal (`main-<session id>`, creat
 **Task board.** The kanban whiteboard on the wall shows the real task list of a session — the one Claude Code keeps with its `TaskCreate` / `TaskUpdate` tools, which the terminal draws as a checklist. Claude Code writes that list to `~/.claude/tasks/<session id>/<n>.json` (`$CLAUDE_CONFIG_DIR/tasks` if you moved it; one file per task with its subject, description, the spinner's *activeForm*, the status and what it is blocked by), and the server reads it from there (`server/tasks.js`): it watches the directory of every session the office knows (`fs.watch` plus a 2 s poll, from the session's first event until it ends), reads it once the writes settle (250 ms) and sends the page a `task_board` only when something changed. `TaskCreated` and `TaskCompleted` (the hook forwards the task id and subject) only make it look at once — nothing fires when a task goes *in progress*, so the files are the truth. On the board, To do post-its are yellow, In progress blue, Done green, one waiting on an unfinished task wears a red pin, and past six a column ends in *+N*; a post-it flashes when Claude picks it up and slides into Done when it is finished, and hovering one shows its subject (the *activeForm* while in progress). The board follows the session whose tasks changed last, with its name in the corner; when several sessions have task lists, click the board to page through them. Clicking it also sends the boss over to read it out — *3 to do, 1 in progress: Fix the parser*. A session without tasks leaves the wall's decorative board exactly as it was. `GET /tasks?sessionId=<id>` lists the boards (the descriptions only with the token, see [Security](#security)). Agent teams (`~/.claude/teams`, a team's shared task list) are not shown yet.
 
 **Uninstall.** `npm run uninstall-hooks` (or `bash hooks/install-hooks.sh --uninstall`) takes the office back out of `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json` when that is set): it backs the file up (`settings.json.backup.<timestamp>`), removes every hook entry whose command runs `hooks/agent-tracker.sh` — under all 19 events, whatever checkout the path points at, duplicates included — and puts `statusLine` / `subagentStatusLine` back: a status line the installer chained is restored from `~/.agent-office/statusline-prev` (and `subagent-statusline-prev`), which are then deleted; one the installer added is removed. Hooks and settings that are not the office's are not touched, a file with nothing of ours in it is left as it is (exit 0), and one that is not valid JSON is refused with the parse error (exit 1, nothing changed). `--uninstall --no-status-line` removes the hooks only, `--uninstall --status-line-only` the status line only. The plugin install is removed with `/plugin uninstall agent-office` (see below).
+
+## Connect OpenCode
+
+OpenCode uses a TypeScript/JavaScript plugin (not Claude Code bash hooks). The bridge lives in [`opencode/`](../opencode/) and posts the same `POST /event` shapes the Claude tracker uses, with `connection: "opencode"` so the office labels the main agent **OpenCode**.
+
+```bash
+npm run install-opencode
+```
+
+That copies `opencode/` into `~/.config/opencode/plugins/agent-office/` (or `$OPENCODE_CONFIG_DIR/plugins/`) and writes a shim `agent-office.js` OpenCode loads at startup. Safe to re-run after you move the checkout. Then start the office (`npm run server` / `bash scripts/start-office.sh`) and open a new OpenCode session.
+
+**Subagents.** OpenCode's `task` tool creates a child session (`parentID`). The plugin maps that to `agent_spawned` / `agent_started` / `agent_working` / `agent_completed` and does **not** open a second session pill for the child.
+
+**Permissions.** When `answerPermissions` is on (the `~/.agent-office/answer-permissions` marker), the plugin's `permission.ask` hook long-polls the office like the Claude hook and can Allow/Deny from the UI. Otherwise it only raises a non-answerable needs-you.
+
+**Todos / signals.** `todo.updated` becomes `task_created` / `task_completed` (the Claude task-file watcher is not used for OpenCode). Bash tool calls get the same deploy/test/build/push signal kinds as the Claude tracker.
+
+**Meters.** OpenCode has no Claude `statusLine`; payroll/electricity stay Claude-hook-only for now.
+
+**Uninstall.** `npm run uninstall-opencode`. `npm run doctor` reports whether the plugin is installed.
+
+Claude Code and OpenCode can run side by side — different session ids, different `connection` labels.
 
 ### Install as a Claude Code plugin
 

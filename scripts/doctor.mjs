@@ -55,6 +55,8 @@ export const COMMANDS = {
   uninstallHooks: 'npm run uninstall-hooks -- --no-status-line',
   plugin:    'claude plugin marketplace add W17ant/Claude-Office && claude plugin install agent-office@agent-office',
   unplugin:  'claude plugin uninstall agent-office@agent-office',
+  installOpencode: 'npm run install-opencode',
+  uninstallOpencode: 'npm run uninstall-opencode',
   start:     'npm run build && npm run server',
   startAlt:  'bash scripts/start-office.sh',
   dev:       'npm run dev',
@@ -418,6 +420,39 @@ export function checkDist({ root, port = DEFAULT_PORT }) {
 }
 
 /**
+ * OpenCode global plugin: shim + agent-office/ directory under
+ * ~/.config/opencode/plugins (or $OPENCODE_CONFIG_DIR/plugins).
+ */
+export function checkOpenCode({ home, env = process.env, root = ROOT }) {
+  const configDir = env.OPENCODE_CONFIG_DIR
+    ? resolve(env.OPENCODE_CONFIG_DIR)
+    : join(home, '.config', 'opencode')
+  const plugins = join(configDir, 'plugins')
+  const shim = join(plugins, 'agent-office.js')
+  const dir = join(plugins, 'agent-office')
+  const index = join(dir, 'index.js')
+  const source = join(root, 'opencode', 'index.js')
+
+  if (!existsSync(source)) {
+    return result(WARN, `opencode: checkout missing opencode/ plugin sources at ${source}`)
+  }
+  if (existsSync(shim)) {
+    return result(WARN, `opencode: legacy shim ${shim} — OpenCode 2 only loads plugin directories`,
+      `${COMMANDS.installOpencode} removes the shim and installs agent-office/`)
+  }
+  if (existsSync(index)) {
+    return result(PASS, `opencode: plugin installed at ${dir}`,
+      `restart OpenCode after reinstall; ${COMMANDS.uninstallOpencode} removes it`)
+  }
+  if (existsSync(dir)) {
+    return result(WARN, `opencode: partial install under ${plugins}`,
+      `${COMMANDS.installOpencode} repairs it`)
+  }
+  return result(WARN, `opencode: plugin not installed — OpenCode sessions will not appear in the office`,
+    `${COMMANDS.installOpencode} copies opencode/ into ${plugins}`)
+}
+
+/**
  * Chat AI multi-provider config: settings.json chatAi + API key / claude on PATH.
  * Does not print secret values.
  */
@@ -432,22 +467,23 @@ export function checkChatAi({ officeHome, env = process.env }) {
   const model = env.CHAT_AI_MODEL || chatAi.model || '?'
   const apiKeyEnv = env.CHAT_AI_API_KEY_ENV || chatAi.apiKeyEnv
 
-  if (provider === 'claude-cli') {
+  if (provider === 'claude-cli' || provider === 'opencode') {
+    const bin = provider === 'opencode' ? 'opencode' : 'claude'
     const onPath = (env.PATH || '').split(delimiter).some((dir) => {
       try {
-        accessSync(join(dir, process.platform === 'win32' ? 'claude.cmd' : 'claude'), constants.X_OK)
+        accessSync(join(dir, process.platform === 'win32' ? `${bin}.cmd` : bin), constants.X_OK)
         return true
       } catch {
         try {
-          return existsSync(join(dir, 'claude')) || existsSync(join(dir, 'claude.exe'))
+          return existsSync(join(dir, bin)) || existsSync(join(dir, `${bin}.exe`)) || existsSync(join(dir, `${bin}.cmd`))
         } catch {
           return false
         }
       }
     })
     return onPath
-      ? result(PASS, `chat AI: ${provider} / ${model}`)
-      : result(WARN, `chat AI: ${provider} / ${model} - claude not found on PATH (switch provider in settings or install Claude Code)`)
+      ? result(PASS, `chat AI: ${provider} / ${model || '(default model)'}`)
+      : result(WARN, `chat AI: ${provider} / ${model || '(default)'} - ${bin} not found on PATH (switch provider in settings or install ${bin})`)
   }
 
   if (provider === 'ollama') {
@@ -517,6 +553,7 @@ export async function runDoctor(opts = {}) {
   results.push(checkToken({ officeHome, serverUp: server.up }))
   results.push(checkDist({ root, port }))
   results.push(checkChatAi({ officeHome, env }))
+  results.push(checkOpenCode({ home, env, root }))
 
   return {
     results,
@@ -548,6 +585,8 @@ export function formatReport({ results, ok, context }, { color = false } = {}) {
     ['uninstall what the installer added', COMMANDS.uninstall],
     ['plugin instead of the installer', COMMANDS.plugin],
     ['uninstall the plugin', COMMANDS.unplugin],
+    ['install OpenCode bridge (global plugin)', COMMANDS.installOpencode],
+    ['uninstall OpenCode bridge', COMMANDS.uninstallOpencode],
     ['start the office', `${COMMANDS.start}    # or: ${COMMANDS.startAlt}`],
   ]
   const width = Math.max(...rows.map(([k]) => k.length))

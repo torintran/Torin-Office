@@ -141,6 +141,9 @@ export interface SessionMain {
  */
 export type PermissionSuggestion = Record<string, unknown>
 
+/** Which coding CLI owns a session / permission: Claude Code hooks vs OpenCode plugin. */
+export type SessionConnection = 'claude' | 'opencode'
+
 /**
  * A permission dialog waiting on the office (server/permissions.js): what
  * `permission_request` carries and the WS snapshot lists as pendingPermissions.
@@ -151,6 +154,8 @@ export interface PendingPermission {
   project?: string
   cwd?: string
   sessionTitle?: string
+  /** Host CLI — used for "OpenCode wants to…" vs "Claude wants to…" */
+  connection?: SessionConnection
   toolName: string
   summary: string
   /** The Bash command, the file path, or the tool input as compact JSON (≤ 400 chars) */
@@ -187,6 +192,11 @@ export interface SessionInfo {
   title?: string
   model?: string
   source?: string           // startup | resume | compact | clear | fork | implicit
+  /**
+   * Host CLI. Claude Code hooks omit it (treated as 'claude'); the OpenCode
+   * plugin sends 'opencode'. Sticky for the life of the session.
+   */
+  connection?: SessionConnection
   state: 'active' | 'ended'
   reason?: string           // why it ended
   startedAt?: number
@@ -341,6 +351,8 @@ export interface OfficeEvent {
   // session_started / session_ended / session_registry
   cwd?: string
   source?: string
+  /** Host CLI for this session ('claude' | 'opencode'); not the WS `connection` event type */
+  connection?: SessionConnection
   model?: string
   title?: string
   state?: 'active' | 'ended'

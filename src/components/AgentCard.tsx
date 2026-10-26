@@ -127,7 +127,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agentId, agent, sessions = [], on
       <div className="ac-head">
         <span className="ac-dot" style={{ background: color }} aria-hidden="true" />
         <span className="ac-name">{insp.name}</span>
-        <span className="ac-role">{isMain ? 'session claude' : insp.role}</span>
+        <span className="ac-role">{isMain ? `session ${session?.connection === 'opencode' || insp.session?.connection === 'opencode' ? 'opencode' : 'claude'}` : insp.role}</span>
         {model && <span className="ac-model" title={insp.model ?? insp.stats.model}>{model}</span>}
         <button className="ac-close" onClick={onClose} aria-label="Close" title="Close (Esc)">×</button>
       </div>

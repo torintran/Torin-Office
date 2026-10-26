@@ -78,7 +78,7 @@ export interface Inspection {
   /** A session's Claude: false while only Claude Code's session registry knows the session */
   hooked?: boolean
   main?: SessionMain
-  session?: { id: string; project?: string; title?: string; source?: string; state: string; startedAt?: number; endedAt?: number; reason?: string; agentCount?: number; workingCount?: number }
+  session?: { id: string; project?: string; title?: string; source?: string; connection?: string; state: string; startedAt?: number; endedAt?: number; reason?: string; agentCount?: number; workingCount?: number }
   unread?: number
   parentId?: string
   subagentId?: string

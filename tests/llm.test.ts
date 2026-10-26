@@ -154,6 +154,18 @@ describe('config resolver', () => {
     expect(defaultsForProvider('claude-cli').model).toBe('claude-haiku-5-5')
     expect(defaultsForProvider('deepseek').model).toBe('deepseek-flash')
     expect(defaultsForProvider('deepseek').baseUrl).toBe('https://api.deepseek.com')
+    expect(defaultsForProvider('opencode').provider).toBe('opencode')
+    expect(defaultsForProvider('opencode').timeoutSec).toBe(180)
+  })
+
+  it('parses OpenCode run --format json text parts', async () => {
+    const { parseOpencodeJsonStdout } = await import('../server/llm/providers/opencode.js')
+    const stdout = [
+      '{"type":"step_start","part":{"type":"step-start"}}',
+      '{"type":"text","part":{"type":"text","text":"Hello "}}',
+      '{"type":"text","part":{"type":"text","text":"office"}}',
+    ].join('\n')
+    expect(parseOpencodeJsonStdout(stdout)).toBe('Hello office')
   })
 
   it('switches provider without keeping old model/url', () => {
@@ -189,7 +201,7 @@ describe('config resolver', () => {
 describe('registry', () => {
   it('allowlists known providers only', () => {
     expect(listProviderMeta().map((p: any) => p.id)).toEqual([
-      'claude-cli', 'deepseek', 'ollama', 'openai-compatible',
+      'claude-cli', 'opencode', 'deepseek', 'ollama', 'openai-compatible',
     ])
     expect(() => resolveProvider('evil')).toThrow(/unknown/)
   })

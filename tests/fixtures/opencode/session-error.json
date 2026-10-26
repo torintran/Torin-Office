@@ -1,0 +1,10 @@
+{
+  "type": "session.error",
+  "properties": {
+    "sessionID": "ses_parent_001",
+    "error": {
+      "name": "APIError",
+      "data": { "message": "rate_limit_exceeded", "statusCode": 429 }
+    }
+  }
+}

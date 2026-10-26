@@ -6,10 +6,12 @@ import claudeCli from './providers/claude-cli.js'
 import deepseek from './providers/deepseek.js'
 import ollama from './providers/ollama.js'
 import openaiCompatible from './providers/openai-compatible.js'
+import opencode from './providers/opencode.js'
 
 /** @type {Map<string, object>} */
 const PROVIDERS = new Map([
   [claudeCli.id, claudeCli],
+  [opencode.id, opencode],
   [deepseek.id, deepseek],
   [ollama.id, ollama],
   [openaiCompatible.id, openaiCompatible],

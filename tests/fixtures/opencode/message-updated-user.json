@@ -1,0 +1,14 @@
+{
+  "type": "message.updated",
+  "properties": {
+    "info": {
+      "id": "msg_user_1",
+      "sessionID": "ses_parent_001",
+      "role": "user",
+      "time": { "created": 1700000000500 },
+      "agent": "build",
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4" },
+      "summary": { "title": "Fix the parser please", "body": "", "diffs": [] }
+    }
+  }
+}

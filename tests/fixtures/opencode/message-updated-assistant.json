@@ -1,0 +1,18 @@
+{
+  "type": "message.updated",
+  "properties": {
+    "info": {
+      "id": "msg_asst_1",
+      "sessionID": "ses_parent_001",
+      "role": "assistant",
+      "time": { "created": 1700000000600 },
+      "parentID": "msg_user_1",
+      "modelID": "deepseek",
+      "providerID": "deepseek",
+      "mode": "build",
+      "path": { "cwd": "/Users/dev/my-app", "root": "/Users/dev/my-app" },
+      "cost": 0,
+      "tokens": { "input": 1, "output": 1, "reasoning": 0, "cache": { "read": 0, "write": 0 } }
+    }
+  }
+}

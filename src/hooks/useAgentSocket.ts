@@ -125,6 +125,7 @@ function toSessionInfo(id: string, src: SessionPatch, prev?: SessionInfo): Sessi
     title:          src.title          ?? prev?.title,
     model:          src.model          ?? prev?.model,
     source:         src.source         ?? prev?.source,
+    connection:     src.connection     ?? prev?.connection,
     state:          src.state          ?? prev?.state ?? 'active',
     reason:         src.reason         ?? prev?.reason,
     startedAt:      src.startedAt      ?? prev?.startedAt,

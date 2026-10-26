@@ -1,0 +1,13 @@
+{
+  "type": "session.created",
+  "properties": {
+    "info": {
+      "id": "ses_parent_001",
+      "projectID": "proj_1",
+      "directory": "/Users/dev/my-app",
+      "title": "Fix the parser",
+      "version": "2.1.4",
+      "time": { "created": 1700000000000, "updated": 1700000000000 }
+    }
+  }
+}

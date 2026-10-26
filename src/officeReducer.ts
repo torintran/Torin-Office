@@ -552,10 +552,20 @@ function mainCount(state: OfficeState): number {
   return state.agents.filter(a => isMainAgent(a) && a.state !== 'completed').length
 }
 
-/** A chat line from a session's Claude; "Claude · <project>" once several terminals are open */
+/** Display name for a session's main agent, by connection host. */
+export function mainDisplayName(connection?: string): string {
+  return connection === 'opencode' ? 'OpenCode' : 'Claude'
+}
+
+function mainProductName(connection?: string): string {
+  return connection === 'opencode' ? 'OpenCode' : 'Claude Code'
+}
+
+/** A chat line from a session's main agent; "Claude · <project>" once several terminals are open */
 function claudeMsg(state: OfficeState, claude: Agent, text: string, tag?: 'prompt' | 'reply'): OfficeEffect {
   const cfg = cfgFor(CLAUDE_ROLE)
-  const sender = mainCount(state) > 1 && claude.project ? `${cfg.title} · ${claude.project}` : cfg.title
+  const title = claude.name || cfg.title
+  const sender = mainCount(state) > 1 && claude.project ? `${title} · ${claude.project}` : title
   return { kind: 'msg', sender, role: CLAUDE_ROLE, color: cfg.color, text, agentId: claude.id, ...(tag ? { tag } : {}) }
 }
 
@@ -639,6 +649,7 @@ interface SessionFields {
   cwd?: string
   model?: string
   main?: SessionMain
+  connection?: string
 }
 
 /**
@@ -667,9 +678,11 @@ function ensureClaude(state: OfficeState, sessionId: string, info: SessionFields
   }
   const project = info.project ?? projectFromCwd(info.cwd)
   const cfg = cfgFor(CLAUDE_ROLE)
+  const display = mainDisplayName(info.connection)
+  const product = mainProductName(info.connection)
   const r = spawnAgent(cur, {
-    id, name: cfg.title, role: CLAUDE_ROLE,
-    task: project ? `Claude Code · ${project}` : 'Claude Code',
+    id, name: display, role: CLAUDE_ROLE,
+    task: project ? `${product} · ${project}` : product,
     statusText: 'clocked in',
     sessionId, project, model: info.model,
     preferredSpotId: CLAUDE_HOME_SPOT,
@@ -1010,13 +1023,24 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
             continue
           }
           if (s.id in cur.endedSessions) cur = { ...cur, endedSessions: without(cur.endedSessions, s.id) }
-          const r = ensureClaude(cur, s.id, { project: s.project, cwd: s.cwd, model: s.model, main: s.main }, env)
+          const r = ensureClaude(cur, s.id, {
+            project: s.project, cwd: s.cwd, model: s.model, main: s.main, connection: s.connection,
+          }, env)
           cur = r.state
           effects.push(...r.effects)
           if (!r.created) {
             const id = mainId(s.id)
             if (s.main) cur = applyMain(cur, id, fromServerMain(s.main), env)
-            cur = { ...cur, agents: cur.agents.map(a => (a.id === id ? { ...a, project: s.project ?? a.project, model: s.model ?? a.model } : a)) }
+            const display = s.connection ? mainDisplayName(s.connection) : undefined
+            cur = {
+              ...cur,
+              agents: cur.agents.map(a => (a.id === id ? {
+                ...a,
+                project: s.project ?? a.project,
+                model: s.model ?? a.model,
+                ...(display ? { name: display } : {}),
+              } : a)),
+            }
           }
         }
       }
@@ -1164,14 +1188,26 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       // flips it to hooked and the server sends this again with hooked: true.
       if (action.hooked === false) return none
       const base = sid in state.endedSessions ? { ...state, endedSessions: without(state.endedSessions, sid) } : state
-      const r = ensureClaude(base, sid, { project: action.project, cwd: action.cwd, model: action.model, main: action.main }, env)
+      const r = ensureClaude(base, sid, {
+        project: action.project, cwd: action.cwd, model: action.model, main: action.main,
+        connection: action.connection,
+      }, env)
       if (r.created) return r
       // Already here (a resume, or compaction's SessionStart): refresh what the server knows
       const id = mainId(sid)
       let cur = r.state
       if (action.main) cur = applyMain(cur, id, fromServerMain(action.main), env)
       const project = action.project ?? projectFromCwd(action.cwd)
-      cur = { ...cur, agents: cur.agents.map(a => (a.id === id ? { ...a, project: project ?? a.project, model: action.model ?? a.model } : a)) }
+      const display = mainDisplayName(action.connection)
+      cur = {
+        ...cur,
+        agents: cur.agents.map(a => (a.id === id ? {
+          ...a,
+          project: project ?? a.project,
+          model: action.model ?? a.model,
+          ...(action.connection ? { name: display } : {}),
+        } : a)),
+      }
       return { state: cur, effects: r.effects }
     }
 

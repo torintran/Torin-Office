@@ -199,13 +199,16 @@ const VERB_BY_TOOL: Record<string, string> = {
   WebFetch: 'fetch', WebSearch: 'search', Glob: 'find files', Grep: 'search',
 }
 
-/** "Claude wants to run Bash", "... write probe.txt", "... use mcp__github__create_pull_request". */
-export function permissionTitle(p: Pick<PendingPermission, 'toolName' | 'summary'>): string {
+/** "Claude/OpenCode wants to run Bash", "... write probe.txt", "... use mcp__github__create_pull_request". */
+export function permissionTitle(
+  p: Pick<PendingPermission, 'toolName' | 'summary'> & { connection?: string },
+): string {
+  const who = p.connection === 'opencode' ? 'OpenCode' : 'Claude'
   const verb = VERB_BY_TOOL[p.toolName]
-  if (!verb) return `Claude wants to use ${p.toolName}`
-  if (p.toolName === 'Bash') return 'Claude wants to run Bash'
+  if (!verb) return `${who} wants to use ${p.toolName}`
+  if (p.toolName === 'Bash' || p.toolName === 'bash') return `${who} wants to run Bash`
   const what = p.summary && p.summary !== p.toolName ? p.summary : p.toolName
-  return `Claude wants to ${verb} ${what}`
+  return `${who} wants to ${verb} ${what}`
 }
 
 /** acceptEdits -> accept-edits, bypassPermissions -> bypass-permissions. */

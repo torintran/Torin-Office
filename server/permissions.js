@@ -172,6 +172,7 @@ export function createPermissionStore({ broadcast = () => {}, now = Date.now, pr
       ...(fields.project ? { project: String(fields.project) } : {}),
       ...(fields.cwd ? { cwd: String(fields.cwd) } : {}),
       ...(fields.sessionTitle ? { sessionTitle: String(fields.sessionTitle) } : {}),
+      ...(fields.connection === 'opencode' || fields.connection === 'claude' ? { connection: fields.connection } : {}),
       toolName: String(fields.toolName || 'tool'),
       summary: String(fields.summary ?? ''),
       detail: String(fields.detail ?? ''),

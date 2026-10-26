@@ -1,0 +1,11 @@
+{
+  "hook": "tool.execute.before",
+  "input": {
+    "tool": "bash",
+    "sessionID": "ses_parent_001",
+    "callID": "call_bash_1"
+  },
+  "output": {
+    "args": { "command": "npm test", "description": "Run tests" }
+  }
+}

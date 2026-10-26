@@ -1,0 +1,15 @@
+{
+  "hook": "tool.execute.before",
+  "input": {
+    "tool": "task",
+    "sessionID": "ses_parent_001",
+    "callID": "call_task_1"
+  },
+  "output": {
+    "args": {
+      "description": "Review auth",
+      "prompt": "Review the auth module for security issues",
+      "subagent_type": "code-reviewer"
+    }
+  }
+}

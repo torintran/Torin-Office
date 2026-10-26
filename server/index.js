@@ -488,6 +488,8 @@ const FIRST_TOOL_BIND_MS = 5 * 60_000
 // Agents with no activity for this long are assumed gone (missed hand-back,
 // Claude Code killed mid-task) and are walked out of the office.
 const STALE_AGENT_MS = (Number(process.env.AGENT_OFFICE_STALE_MINUTES) || 120) * 60_000
+/** OpenCode sessions often miss session.deleted after UI delete / `opencode run` — sweep sooner. */
+const STALE_OPENCODE_MS = (Number(process.env.AGENT_OFFICE_OPENCODE_STALE_MINUTES) || 15) * 60_000
 
 // ---------------------------------------------------------------------------
 // Activity — what each character has done, for the inspector card
@@ -934,13 +936,19 @@ function sessionEvent(session, type = 'session_started') {
   return { type, sessionId: id, ...json, timestamp: Date.now() }
 }
 
-function createSession({ id, project, cwd, source, model, title, transcriptPath, now = Date.now() }) {
+/** Normalise connection host: Claude Code hooks omit it (default claude); OpenCode plugin sends opencode. */
+function connectionOf(value) {
+  return value === 'opencode' ? 'opencode' : 'claude'
+}
+
+function createSession({ id, project, cwd, source, model, title, transcriptPath, connection, now = Date.now() }) {
   const session = {
     id,
     hooked: true,
     project: projectName(project, cwd),
     cwd,
     source: source || 'implicit',
+    connection: connectionOf(connection),
     state: 'active',
     startedAt: now,
     lastActivityAt: now,
@@ -952,7 +960,7 @@ function createSession({ id, project, cwd, source, model, title, transcriptPath,
   // The session's own transcript; a worker's file is derived from it (server/transcript.js)
   if (transcriptPath) session.transcriptPath = transcriptPath
   sessions.set(id, session)
-  console.log(`[session] ${session.source}: ${session.project ?? id} (${id})`)
+  console.log(`[session] ${session.source}/${session.connection}: ${session.project ?? id} (${id})`)
   return session
 }
 
@@ -985,7 +993,10 @@ function touchSession(body, now = Date.now()) {
   if (!id) return null
   let session = sessions.get(id)
   if (!session) {
-    session = createSession({ id, project: body.project, cwd: body.cwd, source: 'implicit', transcriptPath: body.transcriptPath, now })
+    session = createSession({
+      id, project: body.project, cwd: body.cwd, source: 'implicit',
+      transcriptPath: body.transcriptPath, connection: body.connection, now,
+    })
     saveAgents()
     broadcast(sessionEvent(session))
     return session
@@ -998,6 +1009,9 @@ function touchSession(body, now = Date.now()) {
   if (!session.project) session.project = projectName(body.project, body.cwd)
   if (!session.cwd && body.cwd) session.cwd = body.cwd
   if (body.transcriptPath && session.transcriptPath !== body.transcriptPath) session.transcriptPath = body.transcriptPath
+  // Connection is sticky: set once from the first event that names it
+  if (!session.connection && body.connection) session.connection = connectionOf(body.connection)
+  if (session.connection == null) session.connection = 'claude'
   return session
 }
 
@@ -1241,7 +1255,13 @@ function loadAgents() {
       if (!session?.id || session.state === 'ended' || session.hooked === false) continue
       if ((session.lastActivityAt ?? session.startedAt ?? 0) < cutoff) continue
       const agentIds = (Array.isArray(session.agentIds) ? session.agentIds : []).filter(id => activeAgents.has(id))
-      sessions.set(session.id, { ...session, state: 'active', agentIds: new Set(agentIds), main: restoredMain(session.main) })
+      sessions.set(session.id, {
+        ...session,
+        state: 'active',
+        connection: session.connection === 'opencode' ? 'opencode' : 'claude',
+        agentIds: new Set(agentIds),
+        main: restoredMain(session.main),
+      })
     }
     for (const agent of activeAgents.values()) {
       if (agent.sessionId) sessions.get(agent.sessionId)?.agentIds.add(agent.id)
@@ -1858,6 +1878,8 @@ app.post('/event', requireToken, (req, res) => {
     cwd:            clampString(body.cwd, 400),
     transcriptPath: clampString(body.transcriptPath, 400),
     source:  clampString(body.source),
+    // Host CLI: 'claude' (default) | 'opencode' — sticky on the session record
+    connection: body.connection === 'opencode' ? 'opencode' : (body.connection === 'claude' ? 'claude' : undefined),
     model:   clampString(body.model),
     title:   clampString(body.title),
     reason:  clampString(body.reason),
@@ -1933,6 +1955,7 @@ app.post('/event', requireToken, (req, res) => {
       project: session?.project,
       cwd: session?.cwd ?? sanitised.cwd,
       sessionTitle: session?.title,
+      connection: session?.connection || sanitised.connection,
       toolName: sanitised.toolName,
       summary: sanitised.summary,
       detail: sanitised.detail,
@@ -2332,10 +2355,12 @@ function inspectMain(session, { withText }) {
   // window is (the meters' MEMORY), its model a fallback for the session's
   const { section, usage } = transcriptFor(session.transcriptPath, { withText })
   const model = session.model ?? usage?.model
+  const connection = connectionOf(session.connection)
+  const mainName = connection === 'opencode' ? 'OpenCode' : 'Claude'
   return {
     id: mainActivityId(session.id),
     kind: 'main',
-    name: 'Claude',
+    name: mainName,
     role: 'assistant',
     state: main.state,
     status: session.lastStatus,
@@ -2355,6 +2380,7 @@ function inspectMain(session, { withText }) {
       cwd: session.cwd,
       title: session.title,
       source: session.source,
+      connection,
       state: session.state,
       hooked: session.hooked !== false,
       startedAt: session.startedAt,
@@ -3124,7 +3150,10 @@ function processEvent(body) {
       const source = body.source || 'startup'
       let session = sessions.get(id)
       if (!session) {
-        session = createSession({ id, project: body.project, cwd: body.cwd, source, model: body.model, title: body.title, transcriptPath: body.transcriptPath, now })
+        session = createSession({
+          id, project: body.project, cwd: body.cwd, source, model: body.model,
+          title: body.title, transcriptPath: body.transcriptPath, connection: body.connection, now,
+        })
       } else {
         if (session.state === 'ended') {
           clearSessionTimer(id)
@@ -3145,6 +3174,7 @@ function processEvent(body) {
         if (body.model) session.model = body.model
         if (body.title) session.title = body.title
         if (body.transcriptPath) session.transcriptPath = body.transcriptPath
+        if (!session.connection) session.connection = connectionOf(body.connection)
       }
       saveAgents()
       return sessionEvent(session)
@@ -3447,11 +3477,13 @@ const MCP_STALE_MS = (Number(process.env.AGENT_OFFICE_MCP_STALE_MINUTES) || 5) *
  */
 function sweepStale(now = Date.now()) {
   const cutoff = now - STALE_AGENT_MS
+  const opencodeCutoff = now - STALE_OPENCODE_MS
   for (const session of Array.from(sessions.values())) {
     // A session with a live registry entry has a running process, however
     // quiet it is; the registry ends it when the process goes
     if (session.registry) continue
-    if (session.state === 'active' && session.lastActivityAt < cutoff) {
+    const sessionCutoff = session.connection === 'opencode' ? opencodeCutoff : cutoff
+    if (session.state === 'active' && session.lastActivityAt < sessionCutoff) {
       broadcast(processEvent({ type: 'session_ended', sessionId: session.id, reason: 'stale' }))
     }
   }

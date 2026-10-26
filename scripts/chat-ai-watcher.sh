@@ -157,13 +157,21 @@ routes = [
     (['perf','slow','optimize','speed','latency','bundle','lighthouse','core web vitals','memory leak','cache','lazy load','render','fps','bottleneck'], 'performance-engineer', 'PerfEng'),
     (['db','query','schema','migration','sql','postgres','mysql','mongo','redis','index','join','table','row','column','orm','prisma','drizzle','supabase','neon'], 'database-architect', 'DBA'),
     (['typescript','type','interface','generic','enum','union','infer','zod','validation','schema'], 'typescript-pro', 'TS Pro'),
-    (['ai','llm','prompt','model','openai','anthropic','embedding','vector','rag','agent','token','context window'], 'ai-engineer', 'AI Eng'),
+    (['ai eng','ai engineer','llm','openai','chatgpt','anthropic','embedding','vector','rag','context window'], 'ai-engineer', 'AI Eng'),
     (['api','endpoint','rest','graphql','webhook','route','middleware','request','response','http','fetch','axios','cors'], 'fullstack-developer', 'Fullstack'),
     (['git','branch','commit','rebase','cherry-pick','stash','conflict','remote','origin'], 'code-reviewer', 'Reviewer'),
     (['refactor','clean','abstract','pattern','solid','dry','yagni','architecture','module','package','monorepo'], 'architect-reviewer', 'Architect'),
 ]
+import re
+def hit(msg, w):
+    w = w.strip().lower()
+    if not w: return False
+    if ' ' in w: return w in msg
+    if len(w) <= 3:
+        return re.search(r'(?<![\\w])' + re.escape(w) + r'(?![\\w])', msg, re.I) is not None
+    return w in msg
 for keywords, role, name in routes:
-    if any(w in msg for w in keywords):
+    if any(hit(msg, w) for w in keywords):
         print(f'{role}|{name}')
         sys.exit(0)
 print('assistant|Claude')

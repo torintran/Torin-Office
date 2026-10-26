@@ -1,0 +1,142 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Office: Run",
+      "detail": "Install OpenCode plugin → server + Vite + chat AI → open browser",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Office: Install OpenCode",
+        "Office: Stack",
+        "Office: Open"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Office: Stack",
+      "detail": "Express server + Vite + chat AI watcher (parallel)",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Office: Server",
+        "Office: Vite",
+        "Office: Chat AI"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Office: Chat AI",
+      "detail": "Polls office chat and replies (needed for Slack panel answers)",
+      "type": "npm",
+      "script": "chat-ai",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "chat-ai",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "\\[chat-ai\\] Started"
+        }
+      },
+      "presentation": {
+        "group": "office",
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      }
+    },
+    {
+      "label": "Office: Server",
+      "type": "npm",
+      "script": "server",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "office-server",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Agent Office Server"
+        }
+      },
+      "presentation": {
+        "group": "office",
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      }
+    },
+    {
+      "label": "Office: Vite",
+      "type": "npm",
+      "script": "dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "(Local:|ready in)"
+        }
+      },
+      "presentation": {
+        "group": "office",
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      }
+    },
+    {
+      "label": "Office: Open",
+      "type": "shell",
+      "command": "npm run open -- --dev",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "close": true
+      }
+    },
+    {
+      "label": "Office: Install OpenCode",
+      "type": "npm",
+      "script": "install-opencode",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "close": true
+      }
+    },
+    {
+      "label": "Office: Doctor",
+      "type": "npm",
+      "script": "doctor",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Office: Test (OpenCode mapper)",
+      "type": "shell",
+      "command": "npm test -- tests/opencode-map.test.ts",
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

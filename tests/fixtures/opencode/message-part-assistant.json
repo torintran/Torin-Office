@@ -1,0 +1,13 @@
+{
+  "type": "message.part.updated",
+  "properties": {
+    "part": {
+      "id": "part_a1",
+      "sessionID": "ses_parent_001",
+      "messageID": "msg_asst_1",
+      "type": "text",
+      "text": "Here is the answer about permissions."
+    },
+    "delta": "Here is the answer about permissions."
+  }
+}

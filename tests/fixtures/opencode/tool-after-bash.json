@@ -1,0 +1,14 @@
+{
+  "hook": "tool.execute.after",
+  "input": {
+    "tool": "bash",
+    "sessionID": "ses_parent_001",
+    "callID": "call_bash_1",
+    "args": { "command": "npm test" }
+  },
+  "output": {
+    "title": "npm test",
+    "output": "3 passing",
+    "metadata": {}
+  }
+}

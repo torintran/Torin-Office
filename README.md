@@ -145,14 +145,15 @@ Toggle it off any time with `/the-office` again — state persists in `localStor
 
 ## How It Works
 
-Claude Code hooks and its status line send every agent spawn, tool call, prompt and permission wait to a local Express + WebSocket server, which broadcasts them to the React frontend.
+Claude Code hooks (and its status line) or the OpenCode plugin send every agent spawn, tool call, prompt and permission wait to a local Express + WebSocket server, which broadcasts them to the React frontend.
 
 ```
-Claude Code ──hooks + status line──> Express Server ──WebSocket──> React Frontend
-                                          │
-                                    SQLite (chat)
-                                          │
-                                  Chat AI Watcher ──generate.mjs──> Reply
+Claude Code ──hooks + status line──┐
+                                   ├──> Express Server ──WebSocket──> React Frontend
+OpenCode    ──plugin (global)──────┘         │
+                                       SQLite (chat)
+                                             │
+                                     Chat AI Watcher ──generate.mjs──> Reply
 ```
 
 ## Quick Start
@@ -168,6 +169,9 @@ npm install
 # Connect Claude Code (adds the hooks + status line to ~/.claude/settings.json, safe to re-run)
 npm run install-hooks
 
+# Or connect OpenCode (global plugin under ~/.config/opencode/plugins/)
+npm run install-opencode
+
 # Start everything (server + frontend + chat watcher) and open the office
 bash scripts/start-office.sh
 
@@ -175,14 +179,14 @@ bash scripts/start-office.sh
 bash scripts/stop-office.sh
 ```
 
-Now spawn agents in Claude Code and watch them appear in the office.
+Now spawn agents in Claude Code or OpenCode and watch them appear in the office. Sessions from OpenCode are labelled **OpenCode**; Claude Code sessions stay **Claude**.
 
 - **Rather have an app?** Grab the installer for Mac, Windows or Linux from [Releases](https://github.com/W17ant/Claude-Office/releases).
 - **Nothing showing up?** `npm run doctor` checks the whole setup and tells you what's missing.
-- **Want it gone?** `npm run uninstall-hooks` takes the hooks back out.
+- **Want it gone?** `npm run uninstall-hooks` / `npm run uninstall-opencode`.
 - Works on macOS and Linux, and on Windows through WSL or Git Bash.
 
-Installing it as a Claude Code plugin, the hook events, every setting and the security model are all in the [reference](docs/reference.md).
+Installing it as a Claude Code plugin, the OpenCode bridge, hook events, every setting and the security model are all in the [reference](docs/reference.md).
 
 ## Customise Your Character
 
@@ -276,7 +280,7 @@ Agents can also message each other directly — see [Agent-to-agent messages](do
 - **Frontend**: React + TypeScript + Vite
 - **Server**: Express + WebSocket (ws)
 - **Storage**: SQLite (better-sqlite3)
-- **Chat AI**: Multi-provider (`claude-cli`, DeepSeek, Ollama, OpenAI-compatible) via `server/llm/` + `scripts/chat-ai-generate.mjs`
+- **Chat AI**: Multi-provider (`claude-cli`, OpenCode, DeepSeek, Ollama, OpenAI-compatible) via `server/llm/` + `scripts/chat-ai-generate.mjs`
 - **Sprites**: Custom pixel art (isometric)
 - **Desktop**: Electron (optional)
 - **Tests**: Vitest, run in CI on every pull request
@@ -298,6 +302,7 @@ Claude-Office/
 │   ├── agent-tracker.sh    # Forwards events to the server
 │   ├── status-line.sh      # Feeds the meters
 │   └── install-hooks.sh    # npm run install-hooks
+├── opencode/               # OpenCode global plugin (npm run install-opencode)
 ├── scripts/                # start / stop / doctor / chat watcher / generate
 ├── electron/               # Desktop app
 ├── public/sprites/         # Pixel art characters + effects

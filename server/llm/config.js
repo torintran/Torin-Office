@@ -32,7 +32,9 @@ export function defaultsForProvider(providerId) {
     model: m.defaultModel || '',
     baseUrl: m.defaultBaseUrl,
     apiKeyEnv: m.defaultApiKeyEnv,
-    timeoutSec: DEFAULT_TIMEOUT_SEC,
+    timeoutSec: typeof m.defaultTimeoutSec === 'number' && m.defaultTimeoutSec > 0
+      ? m.defaultTimeoutSec
+      : DEFAULT_TIMEOUT_SEC,
   }
 }
 
@@ -123,6 +125,8 @@ function coerceModel(v, providerId) {
     if (providerId === 'openai-compatible') {
       throw Object.assign(new Error('model is required for openai-compatible'), { code: 'INVALID_CONFIG' })
     }
+    // OpenCode (and any provider with defaultModel '') may omit model → CLI default
+    if ((m.defaultModel ?? null) === '') return ''
     throw Object.assign(new Error('model must not be empty'), { code: 'INVALID_CONFIG' })
   }
   return t

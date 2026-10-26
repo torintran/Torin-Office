@@ -1,0 +1,11 @@
+{
+  "hook": "tool.execute.before",
+  "input": {
+    "tool": "read",
+    "sessionID": "ses_child_001",
+    "callID": "call_read_1"
+  },
+  "output": {
+    "args": { "filePath": "/Users/dev/my-app/src/auth.ts" }
+  }
+}

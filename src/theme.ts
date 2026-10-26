@@ -181,6 +181,8 @@ function slugToName(slug: string): string {
 /** Swap sender display name to the cast Office character when theme is active. */
 export function themedDisplayName(role: string, fallback: string): string {
   if (state.name !== 'office') return fallback
+  // Keep chat-AI brand names (OpenCode / Claude) — do not remap to cast
+  if (/^(opencode|claude)$/i.test(String(fallback || '').trim())) return fallback
   const cast = state.castByRole[role]
   if (!cast) {
     // Force-assign so the name matches the avatar on first render

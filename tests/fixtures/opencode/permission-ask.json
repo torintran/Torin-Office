@@ -1,0 +1,13 @@
+{
+  "hook": "permission.ask",
+  "input": {
+    "id": "perm_001",
+    "type": "bash",
+    "sessionID": "ses_parent_001",
+    "messageID": "msg_1",
+    "callID": "call_bash_2",
+    "title": "Run git push origin main",
+    "metadata": { "command": "git push origin main" },
+    "time": { "created": 1700000002000 }
+  }
+}

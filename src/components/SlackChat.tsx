@@ -364,6 +364,7 @@ const SlackChat: React.FC<SlackChatProps> = ({ messages, muted, volume, onToggle
             >
               {(chatAiProviders.length ? chatAiProviders : [
                 { id: 'claude-cli', label: 'Claude CLI' },
+                { id: 'opencode', label: 'OpenCode' },
                 { id: 'deepseek', label: 'DeepSeek' },
                 { id: 'ollama', label: 'Ollama' },
                 { id: 'openai-compatible', label: 'OpenAI-compatible' },

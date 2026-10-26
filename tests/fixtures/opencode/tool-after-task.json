@@ -1,0 +1,21 @@
+{
+  "hook": "tool.execute.after",
+  "input": {
+    "tool": "task",
+    "sessionID": "ses_parent_001",
+    "callID": "call_task_1",
+    "args": {
+      "description": "Review auth",
+      "prompt": "Review the auth module for security issues",
+      "subagent_type": "code-reviewer"
+    }
+  },
+  "output": {
+    "title": "Review auth",
+    "output": "Looks good overall; watch token expiry.",
+    "metadata": {
+      "sessionId": "ses_child_001",
+      "summary": []
+    }
+  }
+}
